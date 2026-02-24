@@ -34,7 +34,29 @@ void* handling_request(void* arg){
 		request_handle(connfd);
 		close_or_die(connfd);
 	}
+}
 
+// test SFF by having only 1 thread on the server
+void* handling_SFF_request(void* arg){
+	conn_t* buffer = (conn_t*) arg;
+	while (1){
+		pthread_mutex_lock(&lock_buffer);
+
+		while (num_work == 0){
+			pthread_cond_wait(&has_work, &lock_buffer);
+		}
+
+		conn_t req = buffer[end-1]; // must copy to the thread's stack, because if use the shared buffer, after releasing the lock, master thread can overwrite that block
+		end--;
+		num_work--;
+		pthread_cond_signal(&available_buffer);
+		pthread_mutex_unlock(&lock_buffer);
+		
+		printf("Thread %x is handling request:\n", (unsigned long)pthread_self());
+		request_handle_without_header(&req);
+		printf("File sent: %s\n", req.filename);
+		close_or_die(req.fd);
+	}
 }
 
 //
@@ -80,22 +102,77 @@ int main(int argc, char *argv[]) {
     // }
 
 	// create buffers to store requests
-	int* buffer = malloc(buffer_size * sizeof(int));
+	if (!strcmp(alg, "FIFO")) {
+		int* buffer = malloc(buffer_size * sizeof(int));
 
-	// create pool of workers
-	pthread_t* workers = malloc(threads * sizeof(pthread_t));
-	for (int i = 0; i < threads; i++){
-		pthread_create(&workers[i], NULL, handling_request, buffer);
+		// create pool of workers
+		pthread_t* workers = malloc(threads * sizeof(pthread_t));
+		for (int i = 0; i < threads; i++){
+			pthread_create(&workers[i], NULL, handling_request, buffer);
+		}
+
+		// now, get to work
+		int listen_fd = open_listen_fd_or_die(port);
+		while (1) {
+			struct sockaddr_in client_addr;
+			int client_len = sizeof(client_addr);
+			int conn_fd = accept_or_die(listen_fd, (sockaddr_t *) &client_addr, (socklen_t *) &client_len);
+			// request_handle(conn_fd);
+			// close_or_die(conn_fd);
+
+			// acquire the lock for the buffer
+			// put into the buffer
+
+			pthread_mutex_lock(&lock_buffer);
+			while (num_work == buffer_size) { // wait for the buffer has empty slots
+				pthread_cond_wait(&available_buffer, &lock_buffer);
+			}
+
+			buffer[end] = conn_fd;
+			num_work++;
+			end = (end+1)%buffer_size;
+			pthread_cond_signal(&has_work);
+			pthread_mutex_unlock(&lock_buffer);
+		}
+
+		free(buffer);
+		free(workers);
+		return 0;
 	}
 
-    // now, get to work
-    int listen_fd = open_listen_fd_or_die(port);
-    while (1) {
+	// SSF scheduling
+	conn_t* buffer = malloc(buffer_size * sizeof(conn_t));
+
+	pthread_t* workers = malloc(threads * sizeof(pthread_t));
+	for (int i = 0; i < threads; i++){
+		pthread_create(&workers[i], NULL, handling_SFF_request, buffer);
+	}
+
+	int listen_fd = open_listen_fd_or_die(port);
+	while (1) {
 		struct sockaddr_in client_addr;
 		int client_len = sizeof(client_addr);
 		int conn_fd = accept_or_die(listen_fd, (sockaddr_t *) &client_addr, (socklen_t *) &client_len);
-		// request_handle(conn_fd);
-		// close_or_die(conn_fd);
+		
+		// read the header
+
+		conn_t req;
+		req.fd = conn_fd;
+		
+		readline_or_die(conn_fd, req.buf, MAXBUF);
+
+    	sscanf(req.buf, "%s %s %s", req.method, req.uri, req.version);
+
+		if (strcasecmp(req.method, "GET")) {
+			request_error(conn_fd, req.method, "501", "Not Implemented", "server does not implement this method");
+			continue;
+		}
+
+		req.is_static = request_parse_uri(req.uri, req.filename, req.cgiargs);
+		if (stat(req.filename, &req.sbuf) < 0) {
+			request_error(conn_fd, req.filename, "404", "Not found", "server could not find this file");
+			continue; // master thread skips this request
+		}
 
 		// acquire the lock for the buffer
 		// put into the buffer
@@ -105,20 +182,31 @@ int main(int argc, char *argv[]) {
 			pthread_cond_wait(&available_buffer, &lock_buffer);
 		}
 
-		buffer[end] = conn_fd;
+		int id = 0;
+
+		if (num_work != 0) {
+            for (int i = end - 1; i >= 0; i--) {
+                if (buffer[i].sbuf.st_size > req.sbuf.st_size) {
+                    id = i + 1;
+                    break;
+                }
+            }
+            
+            for (int i = end; i > id; i--) {
+                buffer[i] = buffer[i - 1];
+            }
+        }
+
+		buffer[id] = req;
+		end++;
 		num_work++;
-		end = (end+1)%buffer_size;
+
 		pthread_cond_signal(&has_work);
 		pthread_mutex_unlock(&lock_buffer);
-    }
-	
+	}
+
 	free(buffer);
 	free(workers);
-    return 0;
+	return 0;
+
 }
-
-
-    
-
-
- 

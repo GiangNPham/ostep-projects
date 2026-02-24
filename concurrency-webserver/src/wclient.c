@@ -23,7 +23,7 @@
 #include <pthread.h>
 
 #define MAXBUF (8192)
-#define NUMREQ 100
+#define NUMREQ 1000
 
 //
 // Send an HTTP request for the specified file 
@@ -43,7 +43,7 @@ void client_send(int fd, char *filename) {
 //
 // Read the HTTP response and print it out
 //
-FILE* fp;
+FILE* fp; // simply don't want to read output
 
 void client_print(int fd) {
     char buf[MAXBUF];  
@@ -94,10 +94,7 @@ int main(int argc, char *argv[]) {
 
     fp = fopen("msg.txt", "w");
 
-    thread_args* args = malloc(sizeof(thread_args));
-    args->host = argv[1];
-    args->port = atoi(argv[2]);
-    args->filename = argv[3];
+    
     
     /* Open a single connection to the specified host and port */
     // clientfd = open_client_fd_or_die(host, port);
@@ -115,6 +112,13 @@ int main(int argc, char *argv[]) {
 
 
     for (int i = 0; i < NUMREQ; i++){
+        thread_args* args = malloc(sizeof(thread_args));
+        
+        args->host = argv[1];
+        // args->filename = (i >= NUMREQ / 2) ? argv[3] : "2.txt"; // SFF test logic
+        args->filename = argv[3];
+        args->port = atoi(argv[2]);
+
         int rc = pthread_create(&threads[i], NULL, threads_send, (void *)args);
         if (rc != 0){
             fprintf(stderr, "pthread_create failed at %d\n", i);
@@ -122,19 +126,17 @@ int main(int argc, char *argv[]) {
                 pthread_join(threads[j], NULL);
             }
             free(threads);
-            free(args);
             fclose(fp);
             exit(1);
         }
     }
-    for (int i = 0; i < 100; i++){
+    for (int i = 0; i < NUMREQ; i++){
         int rc = pthread_join(threads[i], NULL);
         if (rc != 0){
-            perror("pthread_join failed\n");
+            fprintf(stderr, "pthread_join failed: %d\n", rc);
 
         }
     }
-    free(args);
     fclose(fp);
     free(threads);
     exit(0);

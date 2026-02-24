@@ -6,8 +6,6 @@
 // Hopefully this is not a problem ... :)
 //
 
-#define MAXBUF (8192)
-
 void request_error(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
     char buf[MAXBUF], body[MAXBUF];
     
@@ -60,7 +58,7 @@ int request_parse_uri(char *uri, char *filename, char *cgiargs) {
     if (!strstr(uri, "cgi")) { 
 	// static
 	strcpy(cgiargs, "");
-	sprintf(filename, ".%s", uri);
+	sprintf(filename, "%s", uri);
 	if (uri[strlen(uri)-1] == '/') {
 	    strcat(filename, "index.html");
 	}
@@ -74,7 +72,7 @@ int request_parse_uri(char *uri, char *filename, char *cgiargs) {
 	} else {
 	    strcpy(cgiargs, "");
 	}
-	sprintf(filename, ".%s", uri);
+	sprintf(filename, "%s", uri);
 	return 0;
     }
 }
@@ -139,6 +137,27 @@ void request_serve_static(int fd, char *filename, int filesize) {
     //  Writes out to the client socket the memory-mapped file 
     write_or_die(fd, srcp, filesize);
     munmap_or_die(srcp, filesize);
+}
+
+// handle a request without header
+void request_handle_without_header(conn_t* req) {    
+    printf("method:%s uri:%s version:%s\n", req->method, req->uri, req->version);
+    request_read_headers(req->fd);
+    
+    
+    if (req->is_static) {
+        if (!(S_ISREG(req->sbuf.st_mode)) || !(S_IRUSR & req->sbuf.st_mode)) {
+            request_error(req->fd, req->filename, "403", "Forbidden", "server could not read this file");
+            return;
+        }
+        request_serve_static(req->fd, req->filename, req->sbuf.st_size);
+    } else {
+	if (!(S_ISREG(req->sbuf.st_mode)) || !(S_IXUSR & req->sbuf.st_mode)) {
+	    request_error(req->fd, req->filename, "403", "Forbidden", "server could not run this CGI program");
+	    return;
+	}
+	request_serve_dynamic(req->fd, req->filename, req->cgiargs);
+    }
 }
 
 // handle a request

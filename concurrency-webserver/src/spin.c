@@ -23,12 +23,7 @@ double get_seconds() {
 
 int main(int argc, char *argv[]) {
     // Extract arguments
-    double spin_for = 0.0;
-    char *buf;
-    if ((buf = getenv("QUERY_STRING")) != NULL) {
-	// just expecting a single number
-	spin_for = (double) atoi(buf);
-    }
+    double spin_for = 10.0;
 
     double t1 = get_seconds();
     while ((get_seconds() - t1) < spin_for)
@@ -37,7 +32,7 @@ int main(int argc, char *argv[]) {
     
     /* Make the response body */
     char content[MAXBUF];
-    sprintf(content, "<p>Welcome to the CGI program (%s)</p>\r\n", buf);
+    sprintf(content, "<p>Welcome to the CGI program</p>\r\n");
     sprintf(content, "%s<p>My only purpose is to waste time on the server!</p>\r\n", content);
     sprintf(content, "%s<p>I spun for %.2f seconds</p>\r\n", content, t2 - t1);
     
