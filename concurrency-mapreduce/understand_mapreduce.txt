@@ -1,0 +1,24 @@
+/*
+Map worker: takes input of file => breaks them into key-value pairs
+
+Each key will correspond to a Partition ID (hash(key) mod R) (R: number of workers)
+In each partition, map worker also sorts by key
+
+Map worker writes to LOCAL DISK with R partitions and send locations of each partition to master (ith partition will be handled by ith reduce worker) 
+
+Reduce worker: receive notification from master => use RPC (remote procedure call) to read data on map workers' hard disk for its partitions
+=> Sort and output
+
+Example: Imagine a Map worker finishes its job. It has processed thousands of words. It doesn't write one file; it writes one (or more) indexed spill files. Inside that file, the data is perfectly ordered by Partition ID.
+Partition 0: (All keys for Reducer 0, sorted)
+Partition 1: (All keys for Reducer 1, sorted)
+Partition 2: (All keys for Reducer 2, sorted)...
+Partition R: (All keys for Reducer R, sorted)
+
+The Map worker also maintains an Index File (or tells the Master) exactly where each partition starts and ends (byte offsets).
+
+Now, with Reduce Worker #5, its job is to handle Partition #5. It asks the Master, "Who has data for me?" The Master says, "Map Worker A and Map Worker B."
+- Request: Reduce Worker #5 sends an HTTP request to Map Worker A: "Give me the bytes from Partition #5."
+- Fetch: Map Worker A looks at its index file, sees that Partition #5 starts at byte 5000 and ends at byte 6000, and sends just those 1000 bytes over the network.
+- Repeat: Reduce Worker #5 does the same for Map Worker B.
+*/
