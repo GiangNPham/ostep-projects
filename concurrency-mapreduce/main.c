@@ -4,6 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+unsigned long MR_DefaultHashPartition(char *key, int num_partitions) {
+  unsigned long hash = 5381;
+  int c;
+  while ((c = *key++) != '\0')
+    hash = hash * 33 + c;
+  return hash % num_partitions;
+}
+
 void Map(char *file_name) {
   FILE *fp = fopen(file_name, "r");
   assert(fp != NULL);
@@ -23,11 +31,12 @@ void Map(char *file_name) {
 void Reduce(char *key, Getter get_next, int partition_number) {
   int count = 0;
   char *value;
-  while ((value = get_next(key, partition_number)) != NULL)
+  while ((value = get_next(key, partition_number)) != NULL) {
     count++;
+  }
   printf("%s %d\n", key, count);
 }
 
 int main(int argc, char *argv[]) {
-  MR_Run(argc, argv, Map, 1, Reduce, 1, MR_DefaultHashPartition);
+  MR_Run(argc, argv, Map, 3, Reduce, 5, MR_DefaultHashPartition);
 }

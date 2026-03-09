@@ -10,18 +10,58 @@ typedef struct Node {
   struct Node *next;
 } Node;
 
-Node **buckets;
-pthread_mutex_t *bucket_locks;
+static Node **buckets;
+static Node **bucket_headers;
+static pthread_mutex_t *bucket_locks;
 
-int num_partitions;
+char **file_names;
+int num_partitions, num_files;
 Partitioner partitionFunc;
 
-unsigned long MR_DefaultHashPartition(char *key, int num_partitions) {
-  unsigned long hash = 5381;
-  int c;
-  while ((c = *key++) != '\0')
-    hash = hash * 33 + c;
-  return hash % num_partitions;
+typedef struct {
+  Mapper map_func;
+  int id, num_mappers;
+} MapperThreadArg;
+
+typedef struct {
+  Reducer reduce_func;
+  int id;
+} ReducerThreadArg;
+
+void *map_setup(void *arg) {
+  MapperThreadArg *args = (MapperThreadArg *)arg;
+
+  for (int i = 1; i <= num_files; i++) {
+    if (i % args->num_mappers != args->id)
+      continue;
+
+    // printf("%d handles %d\n", args->id, i);
+    args->map_func(file_names[i]);
+  }
+  free(args);
+
+  return NULL;
+}
+
+char *get_next(char *key, int partition_number) {
+  Node *curr = bucket_headers[partition_number];
+  if (curr == NULL || strcmp(curr->key, key) != 0) {
+    return NULL;
+  }
+  char *value = curr->value;
+  bucket_headers[partition_number] = curr->next;
+  return value;
+}
+
+void *reduce_setup(void *arg) {
+  ReducerThreadArg *args = (ReducerThreadArg *)arg;
+  while (bucket_headers[args->id] != NULL) {
+    char *key = bucket_headers[args->id]->key;
+    args->reduce_func(key, get_next, args->id);
+  }
+
+  free(arg);
+  return NULL;
 }
 
 void MR_Emit(char *key, char *value) {
@@ -74,9 +114,10 @@ void MR_Emit(char *key, char *value) {
 
 void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
             int num_reducers, Partitioner partition) {
-  // int num_files = argc - 1;
+  num_files = argc - 1;
   num_partitions = num_reducers;
   partitionFunc = partition;
+  file_names = argv;
 
   buckets = malloc(num_partitions * sizeof(Node *));
   if (buckets == NULL) {
@@ -111,7 +152,12 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     // TODO: figure out how to recycle the threads to handle many files
     // maybe using a pool of mappers then use conditional variable to know when
     // all of the mappers are full
-    pthread_create(&mappers[i], NULL, (void *)map, (void *)argv[1]);
+    MapperThreadArg *arg = malloc(sizeof(MapperThreadArg));
+    arg->id = i;
+    arg->map_func = map;
+    arg->num_mappers = num_mappers;
+
+    pthread_create(&mappers[i], NULL, map_setup, (void *)arg);
   }
 
   for (int i = 0; i < num_mappers; i++) {
@@ -119,9 +165,46 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
   }
   free(mappers);
 
-  for (Node *curr = buckets[0]; curr != NULL; curr = curr->next) {
-    printf("%s %s\n", curr->key, curr->value);
-  }
+  // for (Node *curr = buckets[0]; curr != NULL; curr = curr->next) {
+  //   printf("%s %s\n", curr->key, curr->value);
+  // }
 
   // create threads for reducer
+
+  bucket_headers = malloc(sizeof(Node *) * num_partitions);
+  for (int i = 0; i < num_partitions; i++) {
+    bucket_headers[i] = buckets[i];
+  }
+
+  pthread_t *reducers = malloc(sizeof(pthread_t) * num_partitions);
+  for (int i = 0; i < num_reducers; i++) {
+    ReducerThreadArg *args = malloc(sizeof(ReducerThreadArg));
+    args->id = i;
+    args->reduce_func = reduce;
+    pthread_create(&reducers[i], NULL, reduce_setup, (void *)args);
+  }
+
+  for (int i = 0; i < num_partitions; i++) {
+    pthread_join(reducers[i], NULL);
+  }
+  free(reducers);
+
+  // clean up memory
+  // bucket_headers
+  // bucket
+  // locks;
+  for (int i = 0; i < num_partitions; i++) {
+    Node *cur = buckets[i], *prev = NULL;
+    while (cur != NULL) {
+      prev = cur;
+      cur = cur->next;
+      free(prev->key);
+      free(prev->value);
+      free(prev);
+    }
+    pthread_mutex_destroy(&bucket_locks[i]);
+  }
+  free(buckets);
+  free(bucket_headers);
+  free(bucket_locks);
 }
