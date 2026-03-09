@@ -4,6 +4,7 @@
 
 Use linked list to store the pairs in the bucket
 Each linked list will be protected with a mutex lock
+Instead of round-robin schedule for mapper, use a mutex lock (files_index_lock) to let the free threads to immediately work on new files
 
 ## Original README
 

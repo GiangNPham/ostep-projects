@@ -12,10 +12,10 @@ typedef struct Node {
 
 static Node **buckets;
 static Node **bucket_headers;
-static pthread_mutex_t *bucket_locks;
+static pthread_mutex_t *bucket_locks, file_index_lock;
 
 char **file_names;
-int num_partitions, num_files;
+int num_partitions, num_files, files_index;
 Partitioner partitionFunc;
 
 typedef struct {
@@ -31,14 +31,19 @@ typedef struct {
 void *map_setup(void *arg) {
   MapperThreadArg *args = (MapperThreadArg *)arg;
 
-  for (int i = 1; i <= num_files; i++) {
-    if (i % args->num_mappers != args->id)
-      continue;
+  while (1) {
+    pthread_mutex_lock(&file_index_lock);
 
-    // printf("%d handles %d\n", args->id, i);
-    args->map_func(file_names[i]);
+    if (files_index > num_files) {
+      pthread_mutex_unlock(&file_index_lock);
+      free(args);
+      return NULL;
+    }
+    int handle_id = files_index++;
+    pthread_mutex_unlock(&file_index_lock);
+    printf("%d handles %d\n", args->id, handle_id);
+    args->map_func(file_names[handle_id]);
   }
-  free(args);
 
   return NULL;
 }
@@ -115,6 +120,7 @@ void MR_Emit(char *key, char *value) {
 void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
             int num_reducers, Partitioner partition) {
   num_files = argc - 1;
+  files_index = 1;
   num_partitions = num_reducers;
   partitionFunc = partition;
   file_names = argv;
@@ -140,6 +146,8 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     pthread_mutex_init(&bucket_locks[i], NULL);
   }
 
+  pthread_mutex_init(&file_index_lock, NULL);
+
   pthread_t *mappers = malloc(sizeof(pthread_t) * num_mappers);
   if (mappers == NULL) {
     perror("Cannot malloc mappers\n");
@@ -149,9 +157,6 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
   }
 
   for (int i = 0; i < num_mappers; i++) {
-    // TODO: figure out how to recycle the threads to handle many files
-    // maybe using a pool of mappers then use conditional variable to know when
-    // all of the mappers are full
     MapperThreadArg *arg = malloc(sizeof(MapperThreadArg));
     arg->id = i;
     arg->map_func = map;
