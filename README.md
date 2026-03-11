@@ -7,4 +7,8 @@ These are some projects that I work on from the OSTEP book:
 - [x] [Parallel Zip](concurrency-pzip): simply zip files concurrently
 - [x] [Unix Utilities](initial-utilities) (cat, grep, zip/unzip)
 - [x] [Shell](processes-shell): a simple shell to support basic commands with redirection and multiprocesses (vibecoded with Antigravity)
-- [ ] [File System Checker](filesystems-checker)
+- [x] [KV](initial-kv): a simple Key-Value storage system
+- [x] [Memcached](initial-memcached): add to memcached, a widely-used networked caching system, feature of decreasing, multiplying, dividing.
+
+- [ ] [Distributed filesystem with Log-Structured File System](filesystems-distributed)
+- [ ] [Distributed filesystem with Unix File System](filesystems-distributed-ufs)
